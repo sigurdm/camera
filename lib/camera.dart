@@ -19,39 +19,67 @@ CameraLensDirection _parseCameraLensDirection(String string) {
   }
 }
 
-Future<List<CameraDescription>> getAll() async {
-  List<Map<String, String>> cameras = await _channel.invokeMethod('list');
-  return cameras.map((Map<String, String> camera) {
-    return new CameraDescription(
-        camera['name'], _parseCameraLensDirection(camera['lens_facing']));
-  }).toList();
-}
-
 Future<List<CameraDescription>> availableCameras() async {
+  CameraFormat decodeFormat(Map<String, int> json) {
+    return new CameraFormat(
+        json['width'], json['height'], json['frameDuration']);
+  }
+
   try {
     List<Map<String, String>> cameras = await _channel.invokeMethod('list');
-    return cameras.map((Map<String, String> camera) {
+    return cameras.map((Map<String, dynamic> camera) {
+      final previewFormats =
+          (camera['previewFormats'] as List<Map<String, int>>)
+              .map(decodeFormat)
+              .toList(growable: false);
+      final captureFormats =
+          (camera['captureFormats'] as List<Map<String, int>>)
+              .map(decodeFormat)
+              .toList(growable: false);
       return new CameraDescription(
-          camera['name'], _parseCameraLensDirection(camera['lens_facing']));
+          camera['name'],
+          _parseCameraLensDirection(camera['lensFacing']),
+          previewFormats,
+          captureFormats);
     }).toList();
   } on PlatformException catch (e) {
     throw new CameraException(e.code, e.message);
   }
 }
 
+class CameraFormat {
+  final int width;
+  final int height;
+  final int frameDuration;
+  CameraFormat(this.width, this.height, this.frameDuration);
+
+  @override
+  String toString() {
+    return "${width}x$height frame duration $frameDuration ns";
+  }
+}
+
 class CameraDescription {
   final String name;
-  CameraLensDirection lensDirection;
-  CameraDescription(this.name, this.lensDirection);
+  final CameraLensDirection lensDirection;
+  final List<CameraFormat> previewFormats;
+  final List<CameraFormat> captureFormats;
+  CameraDescription(
+      this.name, this.lensDirection, this.previewFormats, this.captureFormats);
 
-  Future<CameraId> open() async {
+  Future<CameraId> open(CameraFormat previewFormat, CameraFormat captureFormat) async {
     try {
-      int surfaceId =
-          await _channel.invokeMethod('create', {'cameraName': name});
+      int surfaceId = await _channel.invokeMethod('create',
+          {'cameraName': name, 'previewWidth': previewFormat.width, 'previewHeight': previewFormat.height, 'captureWidth': captureFormat.width, 'captureHeight': captureFormat.height});
       return new CameraId._internal(surfaceId);
     } on PlatformException catch (e) {
       throw new CameraException(e.code, e.message);
     }
+  }
+
+  @override
+  String toString() {
+    return "$name captureFormats=$captureFormats, previewFormats=$previewFormats";
   }
 }
 
@@ -89,6 +117,14 @@ class CameraId {
   Future<Null> dispose() async {
     try {
       await _channel.invokeMethod('dispose', {'textureId': textureId});
+    } on PlatformException catch (e) {
+      throw new CameraException(e.code, e.message);
+    }
+  }
+
+  Future<String> capture(String filename) async {
+    try {
+      return await _channel.invokeMethod('capture', {'textureId': textureId, 'filename': filename});
     } on PlatformException catch (e) {
       throw new CameraException(e.code, e.message);
     }
