@@ -1,10 +1,10 @@
-# camera
+# Camera Plugin
 
-A new flutter plugin project.
+A Flutter plugin for demonstrating connecting the device camera to a Texture Widget.
 
-## Getting Started
+Features:
 
-For help getting started with Flutter, view our online
-[documentation](http://flutter.io/).
+* Display live camera on a Texture widget
+* Snapshots can be saved to a file.
 
-For help on editing plugin code, view the [documentation](https://flutter.io/platform-plugins/#edit-code).
+Still a work in progress.

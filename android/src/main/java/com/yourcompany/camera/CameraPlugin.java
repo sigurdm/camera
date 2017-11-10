@@ -83,7 +83,7 @@ public class CameraPlugin implements MethodCallHandler {
     }
 
     private class Cam {
-        private final FlutterView.SurfaceTextureHandle textureHandle;
+        private final FlutterView.SurfaceTextureEntry textureEntry;
         private CameraDevice cameraDevice;
         private Surface previewSurface;
         private CameraCaptureSession cameraCaptureSession;
@@ -92,14 +92,26 @@ public class CameraPlugin implements MethodCallHandler {
         private boolean started = false;
         private int sensorOrientation;
         private boolean facingFront;
+        private String cameraName;
+        private Size previewSize;
+        private Size captureSize;
+        private boolean initialized = false;
 
         Cam(final EventChannel eventChannel,
-            final FlutterView.SurfaceTextureHandle textureHandle,
+            final FlutterView.SurfaceTextureEntry textureEntry,
             final String cameraName,
             final Result result,
             final Size previewSize,
             final Size captureSize) {
-            this.textureHandle = textureHandle;
+            this.textureEntry = textureEntry;
+            this.cameraName = cameraName;
+            this.previewSize = previewSize;
+            this.captureSize = captureSize;
+            // TODO(sigurdm): Use the real values.
+            imageReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);// captureSize.getWidth(), captureSize.getHeight(), ImageFormat.JPEG, 2);
+            SurfaceTexture surfaceTexture = textureEntry.surfaceTexture();
+            surfaceTexture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
+            previewSurface = new Surface(surfaceTexture);
             eventChannel.setStreamHandler(new EventChannel.StreamHandler() {
                 @Override
                 public void onListen(Object arguments, EventChannel.EventSink eventSink) {
@@ -118,78 +130,80 @@ public class CameraPlugin implements MethodCallHandler {
                 @Override
                 public void run() {
                     cameraPermissionContinuation = null;
-                    if (activity.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                        result.error("cameraPermission", "Camera permission not granted", null);
-                    } else {
-                        try {
-                            Log.e(TAG, "captureSize: " + captureSize);
-                            sensorOrientation = cameraManager.getCameraCharacteristics(cameraName).get(CameraCharacteristics.SENSOR_ORIENTATION);
-                            facingFront = cameraManager.getCameraCharacteristics(cameraName).get(CameraCharacteristics.LENS_FACING) == CameraMetadata.LENS_FACING_FRONT;
-                            cameraManager.openCamera(cameraName, new CameraDevice.StateCallback() {
-                                @Override
-                                public void onOpened(CameraDevice cameraDevice) {
-                                    Cam.this.cameraDevice = cameraDevice;
-                                    Log.e(TAG, "CaptureSize: " + captureSize);
-                                    imageReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);// captureSize.getWidth(), captureSize.getHeight(), ImageFormat.JPEG, 2);
-                                    SurfaceTexture surfaceTexture = textureHandle.getSurfaceTexture();
-                                    surfaceTexture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
-                                    previewSurface = new Surface(surfaceTexture);
-                                    List<Surface> surfaceList = new ArrayList<>();
-                                    surfaceList.add(previewSurface);
 
-                                    surfaceList.add(imageReader.getSurface());
-
-                                    Log.e("CameraPlugin", "i " + imageReader.getSurface());
-
-
-                                    try {
-                                        cameraDevice.createCaptureSession(surfaceList, new CameraCaptureSession.StateCallback() {
-                                            @Override
-                                            public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
-                                                Cam.this.cameraCaptureSession = cameraCaptureSession;
-                                                result.success(textureHandle.getId());
-                                            }
-
-                                            @Override
-                                            public void onConfigureFailed(@NonNull CameraCaptureSession cameraCaptureSession) {
-                                                result.error("configureFailed", "Failed to configure camera session", null);
-                                            }
-                                        }, null);
-                                    } catch (CameraAccessException e) {
-                                        result.error("cameraAccess", e.toString(), null);
-                                        return;
-                                    }
-                                }
-
-                                @Override
-                                public void onDisconnected(@NonNull CameraDevice cameraDevice) {
-                                    if (eventSink != null) {
-                                        eventSink.success("disconnected");
-                                    }
-                                }
-
-                                @Override
-                                public void onError(@NonNull CameraDevice cameraDevice, int i) {
-                                    if (eventSink != null) {
-                                        // TODO (sigurdm): Add error description.
-                                        eventSink.success("error");
-                                    }
-                                }
-                            }, null);
-                        } catch (CameraAccessException e) {
-                            result.error("cameraAccess", e.toString(), null);
-                            return;
-                        }
-
-                    }
+                    openCamera(result);
                 }
             };
-            activity.requestPermissions(new String[]{Manifest.permission.CAMERA}, cameraRequestId);
+            if (activity.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                cameraPermissionContinuation.run();
+            } else {
+                activity.requestPermissions(new String[]{Manifest.permission.CAMERA}, cameraRequestId);
+            }
+
         }
 
-        public void start() throws CameraAccessException {
-            assert (cameraDevice != null);
+        private void openCamera(final Result result) {
+            if (activity.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                result.error("cameraPermission", "Camera permission not granted", null);
+            } else {
+                try {
+                    Log.e(TAG, "captureSize: " + captureSize);
+                    //noinspection ConstantConditions
+                    sensorOrientation = cameraManager.getCameraCharacteristics(cameraName).get(CameraCharacteristics.SENSOR_ORIENTATION);
+                    //noinspection ConstantConditions
+                    facingFront = cameraManager.getCameraCharacteristics(cameraName).get(CameraCharacteristics.LENS_FACING) == CameraMetadata.LENS_FACING_FRONT;
+                    cameraManager.openCamera(cameraName, new CameraDevice.StateCallback() {
+                        @Override
+                        public void onOpened(@NonNull CameraDevice cameraDevice) {
+                            Cam.this.cameraDevice = cameraDevice;
 
+                            List<Surface> surfaceList = new ArrayList<>();
+                            surfaceList.add(previewSurface);
+
+                            surfaceList.add(imageReader.getSurface());
+
+                            try {
+                                cameraDevice.createCaptureSession(surfaceList, new CameraCaptureSession.StateCallback() {
+                                    @Override
+                                    public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
+                                        Cam.this.cameraCaptureSession = cameraCaptureSession;
+                                        initialized = true;
+                                        result.success(textureEntry.id());
+                                    }
+
+                                    @Override
+                                    public void onConfigureFailed(@NonNull CameraCaptureSession cameraCaptureSession) {
+                                        result.error("configureFailed", "Failed to configure camera session", null);
+                                    }
+                                }, null);
+                            } catch (CameraAccessException e) {
+                                result.error("cameraAccess", e.toString(), null);
+                            }
+                        }
+
+                        @Override
+                        public void onDisconnected(@NonNull CameraDevice cameraDevice) {
+                            if (eventSink != null) {
+                                eventSink.success("disconnected");
+                            }
+                        }
+
+                        @Override
+                        public void onError(@NonNull CameraDevice cameraDevice, int i) {
+                            if (eventSink != null) {
+                                // TODO (sigurdm): Add error description.
+                                eventSink.success("error");
+                            }
+                        }
+                    }, null);
+                } catch (CameraAccessException e) {
+                    result.error("cameraAccess", e.toString(), null);
+                }
+
+            }
+        }
+
+        void start() throws CameraAccessException {
             final CaptureRequest.Builder previewRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             previewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
@@ -200,33 +214,55 @@ public class CameraPlugin implements MethodCallHandler {
                         @Override
                         public void onCaptureBufferLost(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull Surface target, long frameNumber) {
                             super.onCaptureBufferLost(session, request, target, frameNumber);
-                            Log.e(TAG, "Lost capture buffer");
+                            if (eventSink != null) {
+                                eventSink.success("lost buffer");
+                            }
                         }
                     }, null);
             started = true;
         }
 
-        public void pause() {
+        void pause() {
+            if (!initialized) return;
             if (started) {
                 try {
-                    stop();
+                    cameraCaptureSession.stopRepeating();
                 } catch (CameraAccessException e) {
                     e.printStackTrace();
                 }
             }
-        }
-
-        public void resume() {
-            if (started) {
-                try {
-                    start();
-                } catch (CameraAccessException e) {
-                    e.printStackTrace();
-                }
+            if (cameraCaptureSession != null) {
+                cameraCaptureSession.close();
+            }
+            if (cameraDevice != null) {
+                cameraDevice.close();
             }
         }
 
-        public void capture(String filename, final Result result) throws CameraAccessException {
+        void resume() {
+            if (!initialized) return;
+            openCamera(new Result() {
+                @Override
+                public void success(Object o) {
+                    if (started) {
+                        try {
+                            start();
+                        } catch (CameraAccessException e) {
+                            // TODO(sigurdm): Report error to Flutter.
+                            e.printStackTrace();
+                        }
+                    }
+                }
+
+                @Override
+                public void error(String s, String s1, Object o) {}
+
+                @Override
+                public void notImplemented() {}
+            });
+        }
+
+        void capture(String filename, final Result result) throws CameraAccessException {
             final File file = new File(Environment.getExternalStorageDirectory() + "/" + filename + ".jpg");
             imageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
                 @Override
@@ -254,8 +290,6 @@ public class CameraPlugin implements MethodCallHandler {
                                 }
                             }
                         }
-                    } catch (FileNotFoundException e) {
-                        e.printStackTrace(); // TODO: error handling
                     } catch (IOException e) {
                         e.printStackTrace();  // TODO: error handling
                     } finally {
@@ -272,8 +306,6 @@ public class CameraPlugin implements MethodCallHandler {
                 @Override
                 public void run() {
                     storagePermissionContinuation = null;
-
-
                     try {
                         final CaptureRequest.Builder captureBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                         captureBuilder.addTarget(imageReader.getSurface());
@@ -286,7 +318,7 @@ public class CameraPlugin implements MethodCallHandler {
 
                         cameraCaptureSession.capture(captureBuilder.build(), new CameraCaptureSession.CaptureCallback() {
                             @Override
-                            public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request, TotalCaptureResult result) {
+                            public void onCaptureCompleted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
                                 super.onCaptureCompleted(session, request, result);
                             }
                         }, null);
@@ -295,29 +327,33 @@ public class CameraPlugin implements MethodCallHandler {
                     }
                 }
             };
-            activity.requestPermissions(
-                    new String[]{
-                            Manifest.permission.READ_EXTERNAL_STORAGE,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                    },
-                    storageRequestId);
-
+            if (activity.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
+                    activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+                storagePermissionContinuation.run();
+            } else {
+                activity.requestPermissions(
+                        new String[]{
+                                Manifest.permission.READ_EXTERNAL_STORAGE,
+                                Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        },
+                        storageRequestId);
+            }
         }
 
-        public void stop() throws CameraAccessException {
+        void stop() throws CameraAccessException {
             started = false;
             cameraCaptureSession.abortCaptures();
         }
 
-        public long getTextureId() {
-            return textureHandle.getId();
+        long getTextureId() {
+            return textureEntry.id();
         }
 
-        public void dispose() {
+        void dispose() {
             cameraCaptureSession.close();
             cameraDevice.close();
             cameraDevice = null;
-            textureHandle.release();
+            textureEntry.release();
         }
     }
 
@@ -337,13 +373,10 @@ public class CameraPlugin implements MethodCallHandler {
 
         activity.getApplication().registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override
-            public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
-            }
+            public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
 
             @Override
-            public void onActivityStarted(Activity activity) {
-
-            }
+            public void onActivityStarted(Activity activity) {}
 
             @Override
             public void onActivityResumed(Activity activity) {
@@ -364,24 +397,18 @@ public class CameraPlugin implements MethodCallHandler {
             }
 
             @Override
-            public void onActivityStopped(Activity activity) {
-
-            }
+            public void onActivityStopped(Activity activity) {}
 
             @Override
-            public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
-
-            }
+            public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
 
             @Override
-            public void onActivityDestroyed(Activity activity) {
-
-            }
+            public void onActivityDestroyed(Activity activity) {}
         });
     }
 
-    static final String TAG = "camera plugin";
-    static private Map<Long, Cam> cams = new HashMap<>();
+    private static final String TAG = "camera plugin";
+    private static Map<Long, Cam> cams = new HashMap<>();
     private final FlutterView view;
 
     private List<Map<String, Object>> encodeSizes(Class klass, StreamConfigurationMap streamConfigurationMap) {
@@ -442,10 +469,10 @@ public class CameraPlugin implements MethodCallHandler {
                 result.error("cameraAccess", e.toString(), null);
             }
         } else if (call.method.equals("create")) {
-            FlutterView.SurfaceTextureHandle surfaceTexture = view.createSurfaceTexture();
+            FlutterView.SurfaceTextureEntry surfaceTexture = view.createSurfaceTexture();
             final EventChannel eventChannel =
-                    new EventChannel(registrar.messenger(), "cameraPlugin/cameraEvents" + surfaceTexture.getId());
-            String cameraName = (String) call.argument("cameraName");
+                    new EventChannel(registrar.messenger(), "cameraPlugin/cameraEvents" + surfaceTexture.id());
+            String cameraName = call.argument("cameraName");
             Size previewSize = new Size((Integer) call.argument("previewWidth"), (Integer) call.argument("previewHeight"));
             Size captureSize = new Size((Integer) call.argument("captureWidth"), (Integer) call.argument("captureHeight"));
             Cam cam = new Cam(eventChannel, surfaceTexture, cameraName, result, previewSize, captureSize);

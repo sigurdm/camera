@@ -70,6 +70,7 @@ class CamState extends State<Cam> {
 
   @override
   void initState() {
+    super.initState();
     availableCameras().then((List<CameraDescription> cameras) {
       setState(() {
         this.cameras = cameras;
@@ -122,9 +123,9 @@ class CamState extends State<Cam> {
 
     List<Widget> columnChildren = <Widget>[];
     columnChildren.add(new Row(children: rowChildren));
-    columnChildren.add(new GestureDetector(
+    columnChildren.add(
+      new GestureDetector(
         onTap: () {
-          print("Tap");
           if (started) {
             started = false;
             camera.stop();
@@ -133,21 +134,30 @@ class CamState extends State<Cam> {
             camera.start();
           }
         },
-        onDoubleTap: () {
-          if (started) {
-            camera.capture("picture${pictureCount++}").then((String filename) {
-              setState(() {
-                print(filename);
-                this.filename = filename;
-              });
-            });
-          }
-        },
-        child: new SizedBox(width: 200.0, child: new AspectRatio(
+        child: new SizedBox(
+          width: 200.0,
+          child: new AspectRatio(
             aspectRatio: 2 / 3,
             child: (camera == null)
                 ? new Text("Tap a camera")
-                : new Texture(textureId: camera.textureId)))));
+                : new Stack(children: <Widget>[
+                    new Texture(textureId: camera.textureId),
+                    new Positioned(bottom: 10.0,child: new FloatingActionButton(onPressed:
+                        () {
+                          if (started) {
+                            camera.capture("picture${pictureCount++}").then((String filename) {
+                              setState(() {
+                                this.filename = filename;
+                              });
+                            });
+                          }
+                        }
+                    ))
+                  ]),
+          ),
+        ),
+      ),
+    );
     return new Column(children: columnChildren);
   }
 }
