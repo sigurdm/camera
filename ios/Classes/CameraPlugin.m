@@ -74,8 +74,8 @@
   AVCaptureInput *input = [AVCaptureDeviceInput deviceInputWithDevice:_captureDevice error:&error];
   if (!input)
   {
-    result([FlutterError)
-    NSLog(@"Error %@ in creating video input from camera %@\n", error, cameraName);
+    result([FlutterError errorWithCode:@"device error" message: @"Not able to access camera" details:nil]);
+    return nil;
   }
 
   AVCaptureVideoDataOutput *output = [AVCaptureVideoDataOutput new];
@@ -246,14 +246,16 @@
   else if ([@"create" isEqualToString:call.method])
   {
     NSString *cameraName = call.arguments[@"cameraName"];
-    Cam *cam = [[Cam alloc] initWithCameraName:cameraName];
+    Cam *cam = [[Cam alloc] initWithCameraName:cameraName result:result];
     int64_t textureId = [_registry registerTexture:cam];
      _cams[@(textureId)] = cam;
       NSLog(@"Got texture id %@", @(textureId));
     cam.onFrameAvailable = ^{
       [_registry textureFrameAvailable:textureId];
     };
-    result(@(textureId));
+    if (cam != nil) {
+      result(@(textureId));
+    }
   }
   else
   {
