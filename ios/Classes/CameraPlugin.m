@@ -55,7 +55,6 @@
 @property(readonly, nonatomic) dispatch_semaphore_t closingSemaphore;
 @property(readonly) CVPixelBufferRef volatile latestPixelBuffer;
 
-
 - (instancetype)initWithCameraName:(NSString *)cameraName result:(FlutterResult)result;
 - (void)start;
 - (void)stop;
@@ -74,7 +73,9 @@
   AVCaptureInput *input = [AVCaptureDeviceInput deviceInputWithDevice:_captureDevice error:&error];
   if (!input)
   {
-    result([FlutterError errorWithCode:@"device error" message: @"Not able to access camera" details:nil]);
+    result([FlutterError errorWithCode:@"device error"
+                               message:@"Not able to access camera"
+                               details:nil]);
     return nil;
   }
 
@@ -82,7 +83,7 @@
   output.videoSettings =
       @{(NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
   [output setAlwaysDiscardsLateVideoFrames:YES];
-  [output setSampleBufferDelegate:self queue: dispatch_get_main_queue()];
+  [output setSampleBufferDelegate:self queue:dispatch_get_main_queue()];
 
   AVCaptureConnection *connection =
       [AVCaptureConnection connectionWithInputPorts:input.ports output:output];
@@ -101,7 +102,7 @@
 
 - (void)start
 {
-      [_captureSession startRunning];
+  [_captureSession startRunning];
 }
 
 - (void)stop
@@ -138,16 +139,17 @@
   }
 }
 
-- (void) close {
-    [_captureSession stopRunning];
-    for (AVCaptureInput* input in [_captureSession inputs]) {
-        [_captureSession
-          removeInput:input];
-    }
-    for (AVCaptureOutput* output in [_captureSession outputs]) {
-        [_captureSession
-         removeOutput:output];
-    }
+- (void)close
+{
+  [_captureSession stopRunning];
+  for (AVCaptureInput *input in [_captureSession inputs])
+  {
+    [_captureSession removeInput:input];
+  }
+  for (AVCaptureOutput *output in [_captureSession outputs])
+  {
+    [_captureSession removeOutput:output];
+  }
 }
 
 - (void)dealloc
@@ -247,13 +249,14 @@
   {
     NSString *cameraName = call.arguments[@"cameraName"];
     Cam *cam = [[Cam alloc] initWithCameraName:cameraName result:result];
-    int64_t textureId = [_registry registerTexture:cam];
-     _cams[@(textureId)] = cam;
+    if (cam != nil)
+    {
+      int64_t textureId = [_registry registerTexture:cam];
+      _cams[@(textureId)] = cam;
       NSLog(@"Got texture id %@", @(textureId));
-    cam.onFrameAvailable = ^{
-      [_registry textureFrameAvailable:textureId];
-    };
-    if (cam != nil) {
+      cam.onFrameAvailable = ^{
+        [_registry textureFrameAvailable:textureId];
+      };
       result(@(textureId));
     }
   }
@@ -261,7 +264,7 @@
   {
     NSDictionary *argsMap = call.arguments;
     NSUInteger textureId = ((NSNumber *)argsMap[@"textureId"]).unsignedIntegerValue;
-    Cam* cam = _cams[@(textureId)];
+    Cam *cam = _cams[@(textureId)];
     if ([@"start" isEqualToString:call.method])
     {
       [cam start];
@@ -278,20 +281,18 @@
     }
     else if ([@"dispose" isEqualToString:call.method])
     {
+      [cam close];
+      // TODO(sigurdm): Realize why we get a double release here.
+      // [_registry unregisterTexture:textureId];
+      [_cams removeObjectForKey:@(textureId)];
 
-        [cam close];
-        // TODO(sigurdm): Realize why we get a double release here.
-        // [_registry unregisterTexture:textureId];
-        [_cams removeObjectForKey:@(textureId)];
-
-        result(@YES);
+      result(@YES);
     }
     else
     {
       result(FlutterMethodNotImplemented);
     }
   }
-    
 }
 
 @end
