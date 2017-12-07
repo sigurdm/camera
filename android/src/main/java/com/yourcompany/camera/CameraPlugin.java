@@ -411,7 +411,7 @@ public class CameraPlugin implements MethodCallHandler {
     private static Map<Long, Cam> cams = new HashMap<>();
     private final FlutterView view;
 
-    private List<Map<String, Object>> encodeSizes(Class klass, StreamConfigurationMap streamConfigurationMap) {
+    private List<Map<String, Object>> encodeSizes(Class<SurfaceTexture> klass, StreamConfigurationMap streamConfigurationMap) {
         List<Map<String, Object>> sizes = new ArrayList<>();
         for (Size size : streamConfigurationMap.getOutputSizes(klass)) {
             Map<String, Object> sizeDesc = new HashMap<>();
