@@ -64,7 +64,7 @@
   self = [super init];
   NSAssert(self, @"super init cannot be nil");
   _captureSession = [[AVCaptureSession alloc] init];
-  _captureSession.sessionPreset = AVCaptureSessionPresetLow;
+  _captureSession.sessionPreset = AVCaptureSessionPresetMedium;
   _captureDevice = [AVCaptureDevice deviceWithUniqueID:cameraName];
   NSError *error = nil;
   AVCaptureInput *input = [AVCaptureDeviceInput deviceInputWithDevice:_captureDevice error:&error];
