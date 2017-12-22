@@ -1,82 +1,87 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 
-class Camera extends StatefulWidget {
-  final CameraId cameraId;
+class CameraStartStop extends StatefulWidget {
+  final CameraController controller;
 
-  Camera(this.cameraId);
+  CameraStartStop(this.controller);
 
   @override
   State createState() {
-    return new _CameraState(cameraId);
+    return new _CameraStartStopState();
   }
 }
 
-class _CameraState extends State<StatefulWidget> {
-  final CameraId cameraId;
+class _CameraStartStopState extends State<CameraStartStop> {
   bool isPlaying = true;
+  VoidCallback listener;
 
-  _CameraState(this.cameraId);
+  _CameraStartStopState() {
+    listener = () {
+      if (!mounted) return;
+      setState(() {});
+    };
+  }
+
+  CameraController get controller => widget.controller;
 
   @override
   void initState() {
     super.initState();
-    if (isPlaying) cameraId.start();
+    controller.addListener(listener);
   }
 
   @override
-  void deactivate() {
-    if (isPlaying) cameraId.stop();
-    super.deactivate();
+  void didUpdateWidget(CameraStartStop oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      controller.addListener(listener);
+    }
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(listener);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return new GestureDetector(
-      child: new Texture(textureId: cameraId.textureId),
+      child: new CameraPreview(controller),
       onTap: () {
-        isPlaying = !isPlaying;
-        setState(() {});
-        if (isPlaying) {
-          cameraId.start();
+        if (controller.value.isPlaying) {
+          controller.stop();
         } else {
-          cameraId.stop();
+          controller.start();
         }
       },
     );
   }
 }
 
-typedef Widget CameraWidgetBuilder(
-    BuildContext context, Future<CameraId> cameraId);
-
-class Cam extends StatefulWidget {
+class CameraExampleHome extends StatefulWidget {
   @override
-  CamState createState() {
-    return new CamState();
+  CameraExampleHomeState createState() {
+    return new CameraExampleHomeState();
   }
 }
 
-class CamState extends State<Cam> {
+class CameraExampleHomeState extends State<CameraExampleHome> {
   bool opening = false;
-  CameraId camera;
-  List<CameraDescription> cameras;
-  bool started;
+  CameraController controller;
+  List<CameraConfiguration> cameras;
   String filename;
   int pictureCount = 0;
 
   @override
   void initState() {
     super.initState();
-    availableCameras().then((List<CameraDescription> cameras) {
+    availableCameras().then((List<CameraConfiguration> cameras) {
       setState(() {
         this.cameras = cameras;
-        print(cameras[0].captureFormats);
-
-        print(cameras[1].captureFormats);
       });
     });
   }
@@ -87,29 +92,20 @@ class CamState extends State<Cam> {
     if (cameras == null) {
       cameraList.add(new Text("No cameras yet"));
     } else {
-      for (CameraDescription cameraDescription in cameras) {
+      for (CameraConfiguration cameraConfiguration in cameras) {
         cameraList.add(new RaisedButton(
             onPressed: () async {
-              if (opening) return;
-              if (camera != null) {
-                camera.dispose();
-              }
-              camera = null;
-              setState(() {});
-              CameraFormat previewFormat =
-                  cameraDescription.previewFormats.first;
-              CameraFormat captureFormat =
-                  cameraDescription.captureFormats.first;
-              opening = true;
-              camera =
-                  await cameraDescription.open(previewFormat, captureFormat);
-              opening = false;
-              setState(() {});
-              camera.start();
-              started = true;
+                CameraController tempController = controller;
+                controller = null;
+                await tempController?.dispose();
+                setState(() {
+                controller = new CameraController(cameraConfiguration);
+                controller.start();
+                controller.initialize();
+              });
             },
             child: new Text(
-                '${cameraDescription.name} ${cameraDescription.lensDirection}')));
+                '${cameraConfiguration.lensDirection}')));
       }
     }
     List<Widget> rowChildren = <Widget>[new Column(children: cameraList)];
@@ -123,51 +119,49 @@ class CamState extends State<Cam> {
 
     List<Widget> columnChildren = <Widget>[];
     columnChildren.add(new Row(children: rowChildren));
-    columnChildren.add(
-      new GestureDetector(
-        onTap: () {
-          if (started) {
-            started = false;
-            camera.stop();
-          } else {
-            started = true;
-            camera.start();
-          }
-        },
-        child: new SizedBox(
-          width: 200.0,
-          child: new AspectRatio(
-            aspectRatio: 2 / 3,
-            child: (camera == null)
-                ? new Text("Tap a camera")
-                : new Stack(children: <Widget>[
-                    new Texture(textureId: camera.textureId),
-                    new Positioned(bottom: 10.0,child: new FloatingActionButton(onPressed:
-                        () {
-                          if (started) {
-                            camera.capture("picture${pictureCount++}").then((String filename) {
-                              setState(() {
-                                this.filename = filename;
-                              });
-                            });
-                          }
-                        }
-                    ))
-                  ]),
+    if (controller == null) {
+      columnChildren.add(new Text("Tap a camera"));
+    } else {
+      columnChildren.add(
+        new Expanded(
+          child: new Center(
+            child: new AspectRatio(
+              aspectRatio: controller.configuration.previewSize.height /
+                  controller.configuration.previewSize.width,
+              child: new CameraStartStop(controller),
+            ),
           ),
         ),
+      );
+    }
+    return new Scaffold(
+      appBar: new AppBar(
+        title: new Text("Camera example"),
+      ),
+      body: new Column(children: columnChildren),
+      floatingActionButton: new FloatingActionButton(
+        onPressed: () {
+          if (controller.value.isPlaying) {
+            controller.capture("picture${pictureCount++}").then(
+              (String filename) {
+                setState(
+                  () {
+                    this.filename = filename;
+                  },
+                );
+              },
+            );
+          }
+        },
       ),
     );
-    return new Column(children: columnChildren);
   }
 }
 
 void main() {
-  runApp(new MaterialApp(
-      home: new Scaffold(
-    appBar: new AppBar(
-      title: new Text("Camera example"),
+  runApp(
+    new MaterialApp(
+      home: new CameraExampleHome(),
     ),
-    body: new Cam(),
-  )));
+  );
 }

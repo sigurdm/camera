@@ -1,11 +1,13 @@
 package com.yourcompany.camera;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
+import android.graphics.Point;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -37,12 +39,14 @@ import android.util.SparseIntArray;
 import android.view.Surface;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +77,15 @@ public class CameraPlugin implements MethodCallHandler {
         }
     }
 
+    private static class CompareSizesByArea implements Comparator<Size> {
+        @Override
+        public int compare(Size lhs, Size rhs) {
+            // We cast here to ensure the multiplications won't overflow
+            return Long.signum((long) lhs.getWidth() * lhs.getHeight() -
+                    (long) rhs.getWidth() * rhs.getHeight());
+        }
+    }
+
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
 
     static {
@@ -93,8 +106,6 @@ public class CameraPlugin implements MethodCallHandler {
         private int sensorOrientation;
         private boolean facingFront;
         private String cameraName;
-        private Size previewSize;
-        private Size captureSize;
         private boolean initialized = false;
 
         Cam(final EventChannel eventChannel,
@@ -105,10 +116,7 @@ public class CameraPlugin implements MethodCallHandler {
             final Size captureSize) {
             this.textureEntry = textureEntry;
             this.cameraName = cameraName;
-            this.previewSize = previewSize;
-            this.captureSize = captureSize;
-            // TODO(sigurdm): Use the real values.
-            imageReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);// captureSize.getWidth(), captureSize.getHeight(), ImageFormat.JPEG, 2);
+            imageReader = ImageReader.newInstance(captureSize.getWidth(), captureSize.getHeight(), ImageFormat.JPEG, 2);
             SurfaceTexture surfaceTexture = textureEntry.surfaceTexture();
             surfaceTexture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
             previewSurface = new Surface(surfaceTexture);
@@ -147,7 +155,6 @@ public class CameraPlugin implements MethodCallHandler {
                 result.error("cameraPermission", "Camera permission not granted", null);
             } else {
                 try {
-                    Log.e(TAG, "captureSize: " + captureSize);
                     //noinspection ConstantConditions
                     sensorOrientation = cameraManager.getCameraCharacteristics(cameraName).get(CameraCharacteristics.SENSOR_ORIENTATION);
                     //noinspection ConstantConditions
@@ -156,10 +163,8 @@ public class CameraPlugin implements MethodCallHandler {
                         @Override
                         public void onOpened(@NonNull CameraDevice cameraDevice) {
                             Cam.this.cameraDevice = cameraDevice;
-
                             List<Surface> surfaceList = new ArrayList<>();
                             surfaceList.add(previewSurface);
-
                             surfaceList.add(imageReader.getSurface());
 
                             try {
@@ -255,10 +260,12 @@ public class CameraPlugin implements MethodCallHandler {
                 }
 
                 @Override
-                public void error(String s, String s1, Object o) {}
+                public void error(String s, String s1, Object o) {
+                }
 
                 @Override
-                public void notImplemented() {}
+                public void notImplemented() {
+                }
             });
         }
 
@@ -312,7 +319,6 @@ public class CameraPlugin implements MethodCallHandler {
                         int displayRotation = activity.getWindowManager().getDefaultDisplay().getRotation();
                         int displayOrientation = ORIENTATIONS.get(displayRotation);
                         if (facingFront) displayOrientation = -displayOrientation;
-                        Log.e(TAG, "displayRotation " + displayRotation + " displayOrientation" + displayOrientation + " sensorOrientation " + sensorOrientation);
 
                         captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, (-displayOrientation + sensorOrientation) % 360);
 
@@ -350,8 +356,12 @@ public class CameraPlugin implements MethodCallHandler {
         }
 
         void dispose() {
-            cameraCaptureSession.close();
-            cameraDevice.close();
+            if (cameraCaptureSession != null) {
+                cameraCaptureSession.close();
+            }
+            if (cameraDevice != null) {
+                cameraDevice.close();
+            }
             cameraDevice = null;
             textureEntry.release();
         }
@@ -373,10 +383,12 @@ public class CameraPlugin implements MethodCallHandler {
 
         activity.getApplication().registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override
-            public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
+            public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+            }
 
             @Override
-            public void onActivityStarted(Activity activity) {}
+            public void onActivityStarted(Activity activity) {
+            }
 
             @Override
             public void onActivityResumed(Activity activity) {
@@ -397,121 +409,134 @@ public class CameraPlugin implements MethodCallHandler {
             }
 
             @Override
-            public void onActivityStopped(Activity activity) {}
+            public void onActivityStopped(Activity activity) {
+            }
 
             @Override
-            public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
+            public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+            }
 
             @Override
-            public void onActivityDestroyed(Activity activity) {}
+            public void onActivityDestroyed(Activity activity) {
+            }
         });
     }
 
     private static final String TAG = "camera plugin";
+    @SuppressLint("UseSparseArrays")
     private static Map<Long, Cam> cams = new HashMap<>();
     private final FlutterView view;
 
-    private List<Map<String, Object>> encodeSizes(Class<SurfaceTexture> klass, StreamConfigurationMap streamConfigurationMap) {
-        List<Map<String, Object>> sizes = new ArrayList<>();
-        for (Size size : streamConfigurationMap.getOutputSizes(klass)) {
-            Map<String, Object> sizeDesc = new HashMap<>();
-            sizeDesc.put("width", size.getWidth());
-            sizeDesc.put("height", size.getHeight());
-            sizeDesc.put("frameDuration", streamConfigurationMap.getOutputMinFrameDuration(klass, size));
-            sizes.add(sizeDesc);
-        }
-        return sizes;
+
+    private Size getBestPreviewSize(StreamConfigurationMap streamConfigurationMap) {
+       return new Size(640, 480); // TODO(sigurdm): Do something more clever.
     }
 
-    private List<Map<String, Object>> encodeSizes(int format, StreamConfigurationMap streamConfigurationMap) {
-        List<Map<String, Object>> sizes = new ArrayList<>();
-        for (Size size : streamConfigurationMap.getOutputSizes(format)) {
-            Map<String, Object> sizeDesc = new HashMap<>();
-            sizeDesc.put("width", size.getWidth());
-            sizeDesc.put("height", size.getHeight());
-            sizeDesc.put("frameDuration", streamConfigurationMap.getOutputMinFrameDuration(format, size));
-            sizes.add(sizeDesc);
-        }
-        return sizes;
+    private Size getBestCaptureSize(StreamConfigurationMap streamConfigurationMap) {
+        return new Size(640, 480); // TODO(sigurdm): Do something more clever.
+    }
+
+    private Map<String, Integer> encodeSize(Size size) {
+        Map<String, Integer> result = new HashMap<>();
+        result.put("width", size.getWidth());
+        result.put("height", size.getHeight());
+        return result;
     }
 
     @Override
     public void onMethodCall(MethodCall call, Result result) {
-        if (call.method.equals("list")) {
-            try {
-                String[] cameraNames = cameraManager.getCameraIdList();
-                List<Map<String, Object>> cameras = new ArrayList<>();
-                for (String cameraName : cameraNames) {
-                    HashMap<String, Object> details = new HashMap<>();
-                    CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraName);
-                    details.put("name", cameraName);
-                    @SuppressWarnings("ConstantConditions")
-                    int lens_facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                    switch (lens_facing) {
-                        case CameraMetadata.LENS_FACING_FRONT:
-                            details.put("lensFacing", "front");
-                            break;
-                        case CameraMetadata.LENS_FACING_BACK:
-                            details.put("lensFacing", "back");
-                            break;
-                        case CameraMetadata.LENS_FACING_EXTERNAL:
-                            details.put("lensFacing", "external");
-                            break;
-                    }
-                    StreamConfigurationMap streamConfigurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-
-                    details.put("previewFormats", encodeSizes(SurfaceTexture.class, streamConfigurationMap));
-                    details.put("captureFormats", encodeSizes(ImageFormat.JPEG, streamConfigurationMap));
-                    cameras.add(details);
+        switch (call.method) {
+            case "init":
+                for (Cam cam : cams.values()) {
+                    cam.dispose();
                 }
-                result.success(cameras);
-            } catch (CameraAccessException e) {
-                result.error("cameraAccess", e.toString(), null);
+                cams.clear();
+            case "list":
+                try {
+                    String[] cameraNames = cameraManager.getCameraIdList();
+                    List<Map<String, Object>> cameras = new ArrayList<>();
+                    for (String cameraName : cameraNames) {
+                        HashMap<String, Object> details = new HashMap<>();
+                        CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraName);
+                        details.put("name", cameraName);
+                        @SuppressWarnings("ConstantConditions")
+                        int lens_facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                        switch (lens_facing) {
+                            case CameraMetadata.LENS_FACING_FRONT:
+                                details.put("lensFacing", "front");
+                                break;
+                            case CameraMetadata.LENS_FACING_BACK:
+                                details.put("lensFacing", "back");
+                                break;
+                            case CameraMetadata.LENS_FACING_EXTERNAL:
+                                details.put("lensFacing", "external");
+                                break;
+                        }
+                        StreamConfigurationMap streamConfigurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                        details.put("captureFormat", encodeSize(getBestCaptureSize(streamConfigurationMap)));
+                        details.put("previewFormat", encodeSize(getBestPreviewSize(streamConfigurationMap)));
+                        cameras.add(details);
+                    }
+                    result.success(cameras);
+                } catch (CameraAccessException e) {
+                    result.error("cameraAccess", e.toString(), null);
+                }
+                break;
+            case "create": {
+                FlutterView.SurfaceTextureEntry surfaceTexture = view.createSurfaceTexture();
+                final EventChannel eventChannel =
+                        new EventChannel(registrar.messenger(), "cameraPlugin/cameraEvents" + surfaceTexture.id());
+                String cameraName = call.argument("cameraName");
+                Size previewSize = new Size((Integer) call.argument("previewWidth"), (Integer) call.argument("previewHeight"));
+                Size captureSize = new Size((Integer) call.argument("captureWidth"), (Integer) call.argument("captureHeight"));
+                Cam cam = new Cam(eventChannel, surfaceTexture, cameraName, result, previewSize, captureSize);
+                cams.put(cam.getTextureId(), cam);
+                break;
             }
-        } else if (call.method.equals("create")) {
-            FlutterView.SurfaceTextureEntry surfaceTexture = view.createSurfaceTexture();
-            final EventChannel eventChannel =
-                    new EventChannel(registrar.messenger(), "cameraPlugin/cameraEvents" + surfaceTexture.id());
-            String cameraName = call.argument("cameraName");
-            Size previewSize = new Size((Integer) call.argument("previewWidth"), (Integer) call.argument("previewHeight"));
-            Size captureSize = new Size((Integer) call.argument("captureWidth"), (Integer) call.argument("captureHeight"));
-            Cam cam = new Cam(eventChannel, surfaceTexture, cameraName, result, previewSize, captureSize);
-            cams.put(cam.getTextureId(), cam);
-        } else if (call.method.equals("start")) {
-            long textureId = ((Number) call.argument("textureId")).longValue();
-            Cam cam = cams.get(textureId);
-            try {
-                cam.start();
+            case "start": {
+                long textureId = ((Number) call.argument("textureId")).longValue();
+                Cam cam = cams.get(textureId);
+                try {
+                    cam.start();
+                    result.success(true);
+                } catch (CameraAccessException e) {
+                    result.error("cameraAccess", e.toString(), null);
+                }
+                break;
+            }
+            case "capture": {
+                long textureId = ((Number) call.argument("textureId")).longValue();
+                Cam cam = cams.get(textureId);
+                try {
+                    cam.capture((String) call.argument("filename"), result);
+                } catch (CameraAccessException e) {
+                    result.error("cameraAccess", e.toString(), null);
+                }
+                break;
+            }
+            case "stop": {
+                long textureId = ((Number) call.argument("textureId")).longValue();
+                Cam cam = cams.get(textureId);
+                try {
+                    cam.stop();
+                } catch (CameraAccessException e) {
+                    result.error("cameraAccess", e.toString(), null);
+                }
                 result.success(true);
-            } catch (CameraAccessException e) {
-                result.error("cameraAccess", e.toString(), null);
+                break;
             }
-        } else if (call.method.equals("capture")) {
-            long textureId = ((Number) call.argument("textureId")).longValue();
-            Cam cam = cams.get(textureId);
-            try {
-                cam.capture((String) call.argument("filename"), result);
-            } catch (CameraAccessException e) {
-                result.error("cameraAccess", e.toString(), null);
+            case "dispose": {
+                long textureId = ((Number) call.argument("textureId")).longValue();
+                Cam cam = cams.remove(textureId);
+                if (cam != null) {
+                    cam.dispose();
+                }
+                result.success(true);
+                break;
             }
-        } else if (call.method.equals("stop")) {
-            long textureId = ((Number) call.argument("textureId")).longValue();
-            Cam cam = cams.get(textureId);
-            try {
-                cam.stop();
-            } catch (CameraAccessException e) {
-                result.error("cameraAccess", e.toString(), null);
-            }
-            result.success(true);
-        } else if (call.method.equals("dispose")) {
-            long textureId = ((Number) call.argument("textureId")).longValue();
-            Cam cam = cams.remove(textureId);
-            if (cam != null) {
-                cam.dispose();
-            }
-            result.success(true);
-        } else {
-            result.notImplemented();
+            default:
+                result.notImplemented();
+                break;
         }
     }
 }

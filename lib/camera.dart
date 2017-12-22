@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 
-const MethodChannel _channel = const MethodChannel('camera');
+final MethodChannel _channel = const MethodChannel('camera')
+  ..invokeMethod('init');
 
 enum CameraLensDirection { front, back, external, unknown }
 
@@ -19,67 +21,49 @@ CameraLensDirection _parseCameraLensDirection(String string) {
   }
 }
 
-Future<List<CameraDescription>> availableCameras() async {
-  CameraFormat decodeFormat(Map<String, int> json) {
-    return new CameraFormat(
-        json['width'], json['height'], json['frameDuration']);
+Future<List<CameraConfiguration>> availableCameras() async {
+  Size parseSize(Map<String, Object> m) {
+    return new Size((m["width"] as int).toDouble(), (m["height"] as int).toDouble());
   }
-
   try {
     List<Map<String, String>> cameras = await _channel.invokeMethod('list');
-    return cameras.map((Map<String, dynamic> camera) {
-      final previewFormats =
-          (camera['previewFormats'] as List<Map<String, int>>)
-              .map(decodeFormat)
-              .toList(growable: false);
-      final captureFormats =
-          (camera['captureFormats'] as List<Map<String, int>>)
-              .map(decodeFormat)
-              .toList(growable: false);
-      return new CameraDescription(
-          camera['name'],
-          _parseCameraLensDirection(camera['lensFacing']),
-          previewFormats,
-          captureFormats);
+    var v = cameras.map((Map<String, dynamic> camera) {
+      return new CameraConfiguration(
+          name: camera['name'],
+          lensDirection: _parseCameraLensDirection(camera['lensFacing']),
+      previewSize: parseSize(camera['previewFormat']),
+      captureSize: parseSize(camera['captureFormat']));
     }).toList();
+    print("cams: $v");
+    return v;
   } on PlatformException catch (e) {
     throw new CameraException(e.code, e.message);
   }
 }
 
-class CameraFormat {
-  final int width;
-  final int height;
-  final int frameDuration;
-  CameraFormat(this.width, this.height, this.frameDuration);
-
-  @override
-  String toString() {
-    return "${width}x$height frame duration $frameDuration ns";
-  }
-}
-
-class CameraDescription {
+class CameraConfiguration {
   final String name;
   final CameraLensDirection lensDirection;
-  final List<CameraFormat> previewFormats;
-  final List<CameraFormat> captureFormats;
-  CameraDescription(
-      this.name, this.lensDirection, this.previewFormats, this.captureFormats);
+  final Size captureSize;
+  final Size previewSize;
+  CameraConfiguration({this.name, this.lensDirection, this.previewSize, this.captureSize});
 
-  Future<CameraId> open(CameraFormat previewFormat, CameraFormat captureFormat) async {
-    try {
-      int surfaceId = await _channel.invokeMethod('create',
-          {'cameraName': name, 'previewWidth': previewFormat.width, 'previewHeight': previewFormat.height, 'captureWidth': captureFormat.width, 'captureHeight': captureFormat.height});
-      return new CameraId._internal(surfaceId);
-    } on PlatformException catch (e) {
-      throw new CameraException(e.code, e.message);
-    }
+  @override
+  bool operator ==(Object o) {
+    return o is CameraConfiguration &&
+        o.lensDirection == lensDirection &&
+        o.previewSize == previewSize &&
+        o.captureSize == previewSize;
+  }
+
+  @override
+  int get hashCode {
+    return hashValues(previewSize, captureSize);
   }
 
   @override
   String toString() {
-    return "$name captureFormats=$captureFormats, previewFormats=$previewFormats";
+    return "$runtimeType(${previewSize}x$captureSize)";
   }
 }
 
@@ -100,49 +84,142 @@ class CameraException implements Exception {
   String code;
   String description;
   CameraException(this.code, this.description);
-  String toString() => "CameraException($code, $description)";
+  String toString() => "$runtimeType($code, $description)";
 }
 
-class CameraId {
-  final int textureId;
+class CameraPreview extends StatelessWidget {
+  final CameraController controller;
+  const CameraPreview(this.controller);
 
-  CameraId._internal(int surfaceId)
-      : textureId = surfaceId,
-        events = new EventChannel('cameraPlugin/cameraEvents$surfaceId')
+  @override
+  Widget build(BuildContext context) {
+    print("Building camera ${controller.value.initialized}");
+    return controller.value.initialized
+        ? new Texture(textureId: controller._textureId)
+        : new Container();
+  }
+}
+
+class CameraValue {
+  final bool isPlaying;
+  final bool initialized;
+  final String errorDescription;
+  bool get isErroneous => errorDescription != null;
+
+  CameraValue({this.isPlaying, this.initialized, this.errorDescription});
+
+  CameraValue.uninitialized() : this(isPlaying: false, initialized: false);
+
+  CameraValue copyWith({bool isPlaying, bool initialized, String errorDescription}) {
+    return new CameraValue(
+      isPlaying: isPlaying ?? this.isPlaying,
+      initialized: initialized ?? this.initialized,
+      errorDescription: errorDescription ?? this.errorDescription
+    );
+  }
+
+  @override
+  String toString() {
+    return '$runtimeType('
+        'playing: $isPlaying, '
+        'initialized: $initialized, '
+        'errorDescription: $errorDescription)';
+  }
+}
+
+class CameraController extends ValueNotifier<CameraValue> {
+  final CameraConfiguration configuration;
+  int _textureId;
+  bool _disposed = false;
+  StreamSubscription<CameraEvent> _eventSubscription;
+  Completer<Null> _creatingCompleter;
+
+  CameraController(this.configuration)
+      : super(new CameraValue.uninitialized());
+
+  Future<Null> initialize() async {
+    if (_disposed) {
+      return;
+    }
+    try {
+      _creatingCompleter = new Completer<Null>();
+      _textureId = await _channel.invokeMethod('create', {
+        'cameraName': configuration.name,
+        'previewWidth': configuration.previewSize.width.toInt(),
+        'previewHeight': configuration.previewSize.height.toInt(),
+        'captureWidth': configuration.captureSize.width.toInt(),
+        'captureHeight': configuration.captureSize.height.toInt(),
+      });
+      value = value.copyWith(initialized: true);
+      _applyStartStop();
+    } on PlatformException catch (e) {
+      throw new CameraException(e.code, e.message);
+    }
+    _eventSubscription = new EventChannel('cameraPlugin/cameraEvents$_textureId')
             .receiveBroadcastStream()
-            .map(_parseCameraEvent);
+            .map(_parseCameraEvent).listen(_listener);
+    _creatingCompleter.complete(null);
+  }
 
-  final Stream<CameraEvent> events;
+  void _listener(CameraEvent event) {
+    switch (event) {
+      case CameraEvent.disconnected:
+
+      case CameraEvent.error:
+    }
+  }
 
   Future<Null> dispose() async {
-    try {
-      await _channel.invokeMethod('dispose', {'textureId': textureId});
-    } on PlatformException catch (e) {
-      throw new CameraException(e.code, e.message);
+
+    if (_creatingCompleter != null) {
+      await _creatingCompleter.future;
+      if (!_disposed) {
+        _disposed = true;
+        await _eventSubscription?.cancel();
+        await _channel.invokeMethod(
+          'dispose',
+          <String, dynamic>{'textureId': _textureId},
+        );
+      }
     }
+    _disposed = true;
+    super.dispose();
   }
 
+  /// Captures an image and saves it to [filename].
   Future<String> capture(String filename) async {
+    if (!value.initialized || _disposed) {
+      throw new CameraException('Uninitialized capture()',
+          'capture() was called on uninitialized CameraController');
+    }
     try {
-      return await _channel.invokeMethod('capture', {'textureId': textureId, 'filename': filename});
+      return await _channel.invokeMethod(
+          'capture', {'textureId': _textureId, 'filename': filename});
     } on PlatformException catch (e) {
       throw new CameraException(e.code, e.message);
     }
   }
 
+  void _applyStartStop() {
+    if (value.initialized && !_disposed) {
+      if (value.isPlaying) {
+        _channel
+            .invokeMethod('start', {'textureId': _textureId}).catchError(print);
+      } else {
+        _channel.invokeMethod('stop', {'textureId': _textureId});
+      }
+    }
+  }
+
+  /// Starts the preview.
   Future<Null> start() async {
-    try {
-      await _channel.invokeMethod('start', {'textureId': textureId});
-    } on PlatformException catch (e) {
-      throw new CameraException(e.code, e.message);
-    }
+    value = value.copyWith(isPlaying: true);
+    _applyStartStop();
   }
 
+  /// Stops the preview.
   Future<Null> stop() async {
-    try {
-      await _channel.invokeMethod('stop', {'textureId': textureId});
-    } on PlatformException catch (e) {
-      throw new CameraException(e.code, e.message);
-    }
+    value = value.copyWith(isPlaying: false);
+    _applyStartStop();
   }
 }
