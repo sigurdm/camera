@@ -34,7 +34,6 @@ Future<List<CameraConfiguration>> availableCameras() async {
       previewSize: parseSize(camera['previewFormat']),
       captureSize: parseSize(camera['captureFormat']));
     }).toList();
-    print("cams: $v");
     return v;
   } on PlatformException catch (e) {
     throw new CameraException(e.code, e.message);
@@ -93,7 +92,6 @@ class CameraPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    print("Building camera ${controller.value.initialized}");
     return controller.value.initialized
         ? new Texture(textureId: controller._textureId)
         : new Container();
